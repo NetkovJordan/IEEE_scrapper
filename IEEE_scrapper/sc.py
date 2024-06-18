@@ -2,201 +2,131 @@ import csv
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 import time
-from fake_useragent import UserAgent 
+from fake_useragent import UserAgent
 from bs4 import BeautifulSoup
 
-# Prompt the user to enter the URL with query parameters
-url_with_query = input("Enter the URL with query parameters: ")
-
-# Define the URL to scrape
-url = f'https://ieeexplore.ieee.org/search/searchresult.jsp?queryText={url_with_query}'
+# Prompt the user to enter the URL with query parameters and the date range
+url_with_query = input("Enter the search query: ")
+start_year = input("Enter the start year (e.g., 2014): ")
+end_year = input("Enter the end year (e.g., 2024): ")
+output_file_path = input("Enter the full path for the output CSV file (e.g., C:\\path\\to\\output.csv): ")
+max_page_number = int(input("Enter the number of pages to scrape: "))
 
 # Set up Chrome options
 chrome_options = Options()
-chrome_options.add_argument("--headless")  # Ensure headless is set to True.
-chrome_options.add_argument("--disable-gpu")
-chrome_options.add_argument("--no-sandbox")
+chrome_options.add_argument("--disable-extensions")
+chrome_options.add_argument("--disable-plugins")
+chrome_options.add_argument("--disable-application-cache")
+chrome_options.add_argument("--disable-infobars")
+chrome_options.add_argument("--disable-browser-side-navigation")
+chrome_options.add_argument("--disable-features=VizDisplayCompositor")
+chrome_options.add_argument("--headless")
 
 user_agent = UserAgent().random
 chrome_options.add_argument(f"user-agent={user_agent}")
 
 # Set path to chromedriver as per your configuration
-webdriver_service = Service('C:\\Users\\jordan.netkov\\Desktop\\chromedriver-win64\\chromedriver.exe')  # Update this path to the location of your chromedriver
+webdriver_service = Service('C:\\Users\\netko\\OneDrive\\Desktop\\chromedriver-win64\\chromedriver.exe')  # Update this path to the location of your chromedriver
 
-# Choose Chrome Browser
-driver = webdriver.Chrome(service=webdriver_service, options=chrome_options)
+# Function to get page source using Selenium
+def get_page_source(url):
+    driver = webdriver.Chrome(service=webdriver_service, options=chrome_options)
+    driver.get(url)
+    try:
+        # Wait for the main content to load
+        WebDriverWait(driver, 20).until(
+            EC.presence_of_element_located((By.TAG_NAME, 'body'))
+        )
+        time.sleep(2)  # Wait for JavaScript to finish
+        html = driver.page_source
+    except Exception as e:
+        print(f"Error loading page {url}: {e}")
+        html = ""
+    finally:
+        driver.quit()
+    return html
 
-# Access the URL
-driver.get(url)
+# Function to parse articles on a page
+def parse_page(html):
+    soup = BeautifulSoup(html, 'html.parser')
+    a_tags = soup.find_all('a', class_='fw-bold')
+    url_list = [a_tag['href'] for a_tag in a_tags]
+    return url_list
 
-# Wait for the JavaScript to load (adjust the wait time as needed)
-time.sleep(10)
+# Function to scrape article details
+def scrape_article(url, writer):
+    full_url = f"https://ieeexplore.ieee.org{url}"
+    print(" \nMaking request to:", full_url)
+    
+    html_sub = get_page_source(full_url)
+    soup_sub = BeautifulSoup(html_sub, 'html.parser')
 
-# Get the page source after waiting for JavaScript to load
-html = driver.page_source
+    # Extract the title of each article
+    title_element = soup_sub.find('h1', class_='document-title text-2xl-md-lh')
+    title = title_element.text.strip() if title_element else "Not Available"
+    print("Title: ", title)
 
-# Quit the driver
-driver.quit()
+    # Extract the authors for each article 
+    blue_tooltips = soup_sub.find_all('span', class_='blue-tooltip')
+    authors_list = [tooltip.find('span').text.strip() for tooltip in blue_tooltips if tooltip.find('span')]
+    print("Authors:", authors_list)
 
-#Using BeautifulSoup to parse HTML content, first step is to get all the URLs loaded on the page
-soup = BeautifulSoup(html, 'html.parser')
-a_tags = soup.find_all('a', class_='fw-bold')
+    # Extract abstract
+    abstract_div = soup_sub.find('div', class_='abstract-text row g-0')
+    abstract = abstract_div.text.strip().replace("Abstract:", "").strip() if abstract_div else "Not Available"
+    print("Abstract: ", abstract)
 
-# Store URLs in a list
-url_list = []
+    # Extract published in
+    publication_div = soup_sub.find('div', class_='u-pb-1 stats-document-abstract-publishedIn')
+    publication = publication_div.text.strip().replace("Published in:", "").strip() if publication_div else "Not Available"
+    print("Publication: ", publication)
 
-for a_tag in a_tags:
-    url_list.append(a_tag['href'])
+    # Extract date of conference
+    date_conf_div = soup_sub.find('div', class_='u-pb-1 doc-abstract-confdate')
+    date_conf = date_conf_div.text.strip().replace("Date of Conference:", "").strip() if date_conf_div else "Not Available"
+    print("Date of Conference: ", date_conf)
 
-# Now we have a list of URLs. We can loop through each URL to scrape additional content
-with open('scraped_content.csv', 'w', newline='', encoding='utf-8') as csvfile:
-    fieldnames = ['Title', 'Authors', 'Abstract', 'Published In', 'Date of Conference', 'Date Added to IEEE Xplore', 'Conference Location']
+    # Extract date added to IEEE
+    date_ieee_div = soup_sub.find('div', class_='u-pb-1 doc-abstract-dateadded')
+    date_ieee = date_ieee_div.text.strip().replace("Date Added to IEEE Xplore:", "").strip() if date_ieee_div else "Not Available"
+    print("Date Added to IEEE Xplore: ", date_ieee)
+
+    # Extract conference location
+    conf_loc_div = soup_sub.find('div', class_='u-pb-1 doc-abstract-conferenceLoc')
+    conf_loc = conf_loc_div.text.strip().replace("Conference Location:", "").strip() if conf_loc_div else "Not Available"
+    print("Conference Location: ", conf_loc)
+
+    # Write the scraped content to the CSV file
+    writer.writerow({
+        'Title': title,
+        'Authors': authors_list,
+        'Abstract': abstract,
+        'Published In': publication,
+        'Date of Conference': date_conf,
+        'Date Added to IEEE Xplore': date_ieee,
+        'Conference Location': conf_loc,
+        'Document URL': full_url
+    })
+
+# Open CSV file for writing
+with open(output_file_path, 'w', newline='', encoding='utf-8') as csvfile:
+    fieldnames = ['Title', 'Authors', 'Abstract', 'Published In', 'Date of Conference', 'Date Added to IEEE Xplore', 'Conference Location', 'Document URL']
     writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
     writer.writeheader()
 
-    for url in url_list:
-        # Make a request for each URL
-        full_url = f"https://ieeexplore.ieee.org{url}"
-        print(" \nMaking request to:", full_url)
+    # Loop through each page and scrape articles
+    for page_number in range(1, max_page_number + 1):
+        page_url = f'https://ieeexplore.ieee.org/search/searchresult.jsp?action=search&newsearch=true&queryText={url_with_query}&ranges={start_year}_{end_year}_Year&pageNumber={page_number}'
+        print(f"Scraping page {page_number}: {page_url}")
         
-        # Set up Chrome options for the sub-request
-        chrome_options_sub = Options()
-        chrome_options_sub.add_argument("--headless")  # Ensure headless is set to True.
-        chrome_options_sub.add_argument("--disable-gpu")
-        chrome_options_sub.add_argument("--no-sandbox")
-
-        user_agent_sub = UserAgent().random
-        chrome_options_sub.add_argument(f"user-agent={user_agent_sub}")
-
-        # Choose Chrome Browser for the sub-request
-        driver_sub = webdriver.Chrome(service=webdriver_service, options=chrome_options_sub)
-
-        # Access the sub-URL
-        driver_sub.get(full_url)
-
-        # Wait for the JavaScript to load (adjust the wait time as needed)
-        time.sleep(10)
-
-        # Get the page source after waiting for JavaScript to load
-        html_sub = driver_sub.page_source
-
-        # Quit the sub-driver
-        driver_sub.quit()
-
-        # Parse the sub-HTML content
-        soup_sub = BeautifulSoup(html_sub, 'html.parser')
+        page_html = get_page_source(page_url)
+        article_urls = parse_page(page_html)
         
-        #1. Extract the title of each article
-        title_element = soup_sub.find('h1', class_='document-title text-2xl-md-lh')
+        for article_url in article_urls:
+            scrape_article(article_url, writer)
 
-        title = title_element.text.strip()
-
-        #Print to validate
-        print("Title: ", title)
-
-        # 2. Extract the authors for each article 
-        blue_tooltips = soup_sub.find_all('span', class_='blue-tooltip')
-
-        #
-        authors_list = []
-
-        # Loop through each 'blue-tooltip' element to extract author name
-        for blue_tooltip in blue_tooltips:
-            # Find the 'span' element inside 'blue-tooltip' containing author name
-            author_span = blue_tooltip.find('span')
-            if author_span:
-                author = author_span.text.strip()  # Extract the text of the author
-                authors_list.append(author)  # Append the author to the authors list
-
-        # Print to validate
-        print("Authors:", authors_list)
-
-        # 3. Extract abstract
-
-        abstract_div = soup_sub.find('div', class_='abstract-text row g-0')
-        
-        abstract = abstract_div.text.strip()
-
-        # Removing extra added text because it it irrelevant
-
-        abstract = abstract.replace("Abstract:", "").strip()
-
-        # Print to validate
-
-        print("Abstract: ", abstract)
-
-        # 4. Extract published in
-
-        publication_div = soup_sub.find('div', class_='u-pb-1 stats-document-abstract-publishedIn')
-
-        publication = publication_div.text.strip()
-
-        # Removing extra added text because it it irrelevant
-        publication = publication.replace("Published in:", "").strip()
-
-        # Print to validate
-        print("Publication: ", publication)
-
-        # 5. Extract date of conference
-
-        date_conf_div = soup_sub.find('div', class_='u-pb-1 doc-abstract-confdate')
-
-        if date_conf_div:
-
-            date_conf = date_conf_div.text.strip()
-
-            # Removing extra added text because it it irrelevant
-            date_conf = date_conf.replace("Date of Conference:", "").strip()
-
-            # Print to validate
-            print("Date of Conference: ", date_conf)
-        
-        else:
-            print("This article does not have Date of Conference tag. Continuing with script...")
-            date_conf = "Not Available"
-
-        # 6. Extract date added to IEEE
-        date_ieee_div = soup_sub.find('div', class_='u-pb-1 doc-abstract-dateadded')
-       
-        if date_ieee_div:
-            date_ieee = date_ieee_div.text.strip()
-
-            # Removing extra added text because it is irrelevant
-            date_ieee = date_ieee.replace("Date Added to IEEE Xplore:", "").strip()
-
-            # Print to validate
-            print("Date Added to IEEE Xplore: ", date_ieee)
-        else:
-            print("This article does not have Date Added to IEEE Xplore tag. Continuing with script...")
-            date_ieee = "Not Available"
-
-        # 7. Extract conference location
-        conf_loc_div = soup_sub.find('div', class_='u-pb-1 doc-abstract-conferenceLoc')
-
-        if conf_loc_div:
-            conf_loc = conf_loc_div.text.strip()
-
-            # Removing extra added text because it it irrelevant
-            conf_loc = conf_loc.replace("Conference Location:","").strip()
-        
-            # Print to validate
-            print("Conference Location: ", conf_loc)
-        else:
-            print("This article does not have Conference Location tag. Continuing with script...")
-            conf_loc = "Not Available"
-
-        # Write the scraped content to the CSV file
-        writer.writerow({
-            'Title': title,
-            'Authors': authors_list,
-            'Abstract': abstract,
-            'Published In': publication,
-            'Date of Conference': date_conf,
-            'Date Added to IEEE Xplore': date_ieee,
-            'Conference Location': conf_loc
-        })
-        
-        # Save the HTML content parsed from each URL in a text file
-      #  with open(f'html_content_{url.replace("/", "_")}.txt', 'w', encoding='utf-8') as file:
-         #   file.write(html_sub)
+print("Scraping completed.")
