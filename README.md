@@ -99,4 +99,4 @@ Enter the number of pages to scrape: 6
 |
 
 ### Reponse time: 25 mins, 20 secs.
-### Entries: 6 X 25 = 150
+Entries: 6 X 25 = 150
